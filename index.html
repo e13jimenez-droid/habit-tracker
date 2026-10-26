@@ -95,9 +95,9 @@
       left: 0;
       z-index: 3;
       background: #ffffff;
-      width: 46px;
-      min-width: 46px;
-      max-width: 46px;
+      width: 52px;
+      min-width: 52px;
+      max-width: 52px;
     }
 
     /* Sticky header row */
@@ -185,7 +185,14 @@
       border-right: 1px solid #e2e8f0;
       height: 40px;
       position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      line-height: 1.1;
     }
+    .day-num { font-size: 14px; font-weight: 700; color: #1e293b; }
+    .dow-label { font-size: 10px; font-weight: 400; color: #94a3b8; }
 
     #grid td.date-col.today {
       background: #eff6ff;
@@ -514,6 +521,7 @@
       <div id="month-label">—</div>
       <div id="header-right">
         <button class="hdr-btn" id="edit-toggle" title="Edit mode">✎</button>
+        <button class="hdr-btn" id="export-btn" title="Export data">⬇</button>
         <button class="hdr-btn" id="add-habit" title="Add habit">+</button>
         <button class="hdr-btn" id="next-month" title="Next month">›</button>
       </div>
@@ -588,6 +596,7 @@
     var nextMonthBtn = document.getElementById('next-month');
     var editToggleBtn = document.getElementById('edit-toggle');
     var addHabitBtn = document.getElementById('add-habit');
+    var exportBtn = document.getElementById('export-btn');
     var emptyAddBtn = document.getElementById('empty-add-btn');
     var modalOverlay = document.getElementById('modal-overlay');
     var modalTitle = document.getElementById('modal-title');
@@ -921,13 +930,20 @@
       // Body rows (one per day)
       var tbody = document.createElement('tbody');
 
+      // Day-of-week names (0=Sun .. 6=Sat)
+      var DOW = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+      // Get day-of-week for day 1 of this month
+      var monthParts = currentMonth.split('-');
+      var firstDow = new Date(parseInt(monthParts[0]), parseInt(monthParts[1]) - 1, 1).getDay();
+
       for (var day = 1; day <= days; day++) {
+        var dow = (firstDow + day - 1) % 7; // 0=Sun .. 6=Sat
         var tr = document.createElement('tr');
         var isFuture = isCurMonth && day > today;
         var isToday = isCurMonth && day === today;
 
-        // F16: Week separators every 7 rows
-        if (day > 1 && (day - 1) % 7 === 0) {
+        // Week separator between Saturday (dow=6) and Sunday (dow=0)
+        if (day > 1 && dow === 0) {
           tr.classList.add('week-separator');
         }
         if (isToday) {
@@ -939,7 +955,15 @@
         dateTd.className = 'date-col';
         if (isToday) dateTd.classList.add('today');
         if (isFuture) dateTd.classList.add('future');
-        dateTd.textContent = day;
+        // Day number + day-of-week
+        var dayNum = document.createElement('span');
+        dayNum.className = 'day-num';
+        dayNum.textContent = day;
+        var dowSpan = document.createElement('span');
+        dowSpan.className = 'dow-label';
+        dowSpan.textContent = DOW[dow];
+        dateTd.appendChild(dayNum);
+        dateTd.appendChild(dowSpan);
 
         // Note dot indicator
         if (monthData.notes[String(day)]) {
@@ -1234,6 +1258,84 @@
       }
     }
 
+    // ─── Export ───
+
+    function exportData() {
+      var DOW_FULL = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      var habits = activeHabits();
+      if (habits.length === 0) {
+        alert('No habits to export.');
+        return;
+      }
+
+      // Collect all months that have data, sorted chronologically
+      var monthKeys = Object.keys(state.months).sort();
+      if (monthKeys.length === 0) {
+        alert('No month data to export.');
+        return;
+      }
+
+      var lines = [];
+      lines.push('# Habit Tracker Export');
+      lines.push('');
+      lines.push('Exported: ' + new Date().toISOString());
+      lines.push('Habits: ' + habits.map(function(h) { return h.icon + ' ' + h.name + ' (' + h.type + ')'; }).join(', '));
+      lines.push('');
+
+      monthKeys.forEach(function(mKey) {
+        var mData = state.months[mKey];
+        var parts = mKey.split('-');
+        var year = parseInt(parts[0], 10);
+        var month = parseInt(parts[1], 10);
+        var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+        var firstDow = new Date(year, month - 1, 1).getDay();
+
+        lines.push('## ' + monthNames[month - 1] + ' ' + year);
+        lines.push('');
+
+        // Table header
+        var header = '| Date | Day |';
+        var sep = '|------|-----|';
+        habits.forEach(function(h) {
+          header += ' ' + h.icon + ' ' + h.name + ' |';
+          sep += '------|';
+        });
+        header += ' Notes |';
+        sep += '------|';
+        lines.push(header);
+        lines.push(sep);
+
+        // Table rows
+        for (var day = 1; day <= mData.days; day++) {
+          var dow = (firstDow + day - 1) % 7;
+          var row = '| ' + day + ' | ' + DOW_FULL[dow] + ' |';
+          habits.forEach(function(h) {
+            var val = mData.data[h.id] ? mData.data[h.id][String(day)] : null;
+            if (h.type === 'binary') {
+              row += (val === true ? ' ✓ |' : ' — |');
+            } else {
+              row += (val ? ' ' + val + ' |' : ' — |');
+            }
+          });
+          var note = mData.notes[String(day)] || '';
+          row += ' ' + note + ' |';
+          lines.push(row);
+        }
+        lines.push('');
+      });
+
+      var md = lines.join('\n');
+      var blob = new Blob([md], { type: 'text/markdown' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'habit-export-' + todayStr() + '.md';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
     // ─── Event bindings ───
 
     prevMonthBtn.addEventListener('click', prevMonth);
@@ -1245,6 +1347,7 @@
     });
 
     addHabitBtn.addEventListener('click', openModal);
+    exportBtn.addEventListener('click', exportData);
     emptyAddBtn.addEventListener('click', openModal);
 
     modalCancelBtn.addEventListener('click', closeModal);
